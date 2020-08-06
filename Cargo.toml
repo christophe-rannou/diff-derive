@@ -1,7 +1,10 @@
 [package]
 name = "diff_derive"
+description = "A derive macro for implementing Diff on the diff-struct crate"
 version = "0.1.0"
 authors = ["BenHall-7 <benjaminjahall@gmail.com>"]
+repository = "https://github.com/BenHall-7/diff-derive"
+license = "MIT"
 edition = "2018"
 
 [lib]
