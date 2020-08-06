@@ -1,7 +1,9 @@
 extern crate proc_macro;
 use crate::proc_macro::TokenStream;
 use quote::{quote, format_ident};
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Field, Ident};
+use syn::punctuated::Punctuated;
+use syn::token::Comma;
 
 #[proc_macro_derive(Diff)]
 pub fn diff_derive(input: TokenStream) -> TokenStream {
@@ -19,66 +21,73 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
             };
 
             if is_named {
-                let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
-                let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-                quote! {
-                    #[derive(Debug, PartialEq)]
-                    pub struct #diff_name {
-                        #(pub #names: <#types as Diff>::Repr),*
-                    }
-
-                    impl Diff for #name {
-                        type Repr = #diff_name;
-
-                        fn diff(&self, other: &Self) -> Self::Repr {
-                            Self::Repr {
-                                #(#names: self.#names.diff(&other.#names)),*
-                            }
-                        }
-
-                        fn apply(&mut self, diff: &Self::Repr) {
-                            #(self.#names.apply(&diff.#names);)*
-                        }
-
-                        fn identity() -> Self {
-                            Self {
-                                #(#names: <#types as Diff>::identity()),*
-                            }
-                        }
-                    }
-                }
+                derive_named(name, &diff_name, fields)
             } else {
-                let (numbers, types): (Vec<_>, Vec<_>) =
-                    fields.iter().map(|field| &field.ty).enumerate().unzip();
-                quote! {
-                    #[derive(Debug, PartialEq)]
-                    pub struct #diff_name (
-                        #(pub <#types as Diff>::Repr),*
-                    )
-
-                    impl Diff for #name {
-                        type Repr = #diff_name;
-
-                        fn diff(&self, other: &Self) -> Self::Repr {
-                            Self::Repr (
-                                #(self.#numbers.diff(&other.#numbers))*
-                            )
-                        }
-
-                        fn apply(&mut self, diff: &Self::Repr) {
-                            #(self.#numbers.apply(&diff.#numbers);)*
-                        }
-
-                        fn identity() -> Self {
-                            Self (
-                                #(<#types as Diff>::identity()),*
-                            )
-                        }
-                    }
-                }
+                derive_unnamed(name, &diff_name, fields)
             }
-            .into()
         }
         _ => todo!(),
     }
+}
+
+fn derive_named(name: &Ident, diff_name: &Ident, fields: &Punctuated<Field, Comma>) -> TokenStream {
+    let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
+    let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    (quote! {
+        #[derive(Debug, PartialEq)]
+        pub struct #diff_name {
+            #(pub #names: <#types as Diff>::Repr),*
+        }
+
+        impl Diff for #name {
+            type Repr = #diff_name;
+
+            fn diff(&self, other: &Self) -> Self::Repr {
+                Self::Repr {
+                    #(#names: self.#names.diff(&other.#names)),*
+                }
+            }
+
+            fn apply(&mut self, diff: &Self::Repr) {
+                #(self.#names.apply(&diff.#names);)*
+            }
+
+            fn identity() -> Self {
+                Self {
+                    #(#names: <#types as Diff>::identity()),*
+                }
+            }
+        }
+    }).into()
+}
+
+fn derive_unnamed(name: &Ident, diff_name: &Ident, fields: &Punctuated<Field, Comma>) -> TokenStream {
+    let (numbers, types): (Vec<_>, Vec<_>) =
+        fields.iter().map(|field| &field.ty).enumerate().unzip();
+    (quote! {
+        #[derive(Debug, PartialEq)]
+        pub struct #diff_name (
+            #(pub <#types as Diff>::Repr),*
+        )
+
+        impl Diff for #name {
+            type Repr = #diff_name;
+
+            fn diff(&self, other: &Self) -> Self::Repr {
+                Self::Repr (
+                    #(self.#numbers.diff(&other.#numbers))*
+                )
+            }
+
+            fn apply(&mut self, diff: &Self::Repr) {
+                #(self.#numbers.apply(&diff.#numbers);)*
+            }
+
+            fn identity() -> Self {
+                Self (
+                    #(<#types as Diff>::identity()),*
+                )
+            }
+        }
+    }).into()
 }
