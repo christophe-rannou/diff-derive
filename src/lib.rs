@@ -2,10 +2,11 @@ extern crate proc_macro;
 use crate::proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::punctuated::{Punctuated};
+use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    parenthesized, parse, parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields, Ident,
+    parenthesized, parse, parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields,
+    Ident, Index,
 };
 
 #[proc_macro_derive(Diff, attributes(diff))]
@@ -35,7 +36,12 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
     }
 }
 
-fn derive_named(attr: &[Attribute], name: &Ident, diff_name: &Ident, fields: &Punctuated<Field, Comma>) -> TokenStream {
+fn derive_named(
+    attr: &[Attribute],
+    name: &Ident,
+    diff_name: &Ident,
+    fields: &Punctuated<Field, Comma>,
+) -> TokenStream {
     let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
     (quote! {
@@ -48,7 +54,7 @@ fn derive_named(attr: &[Attribute], name: &Ident, diff_name: &Ident, fields: &Pu
             type Repr = #diff_name;
 
             fn diff(&self, other: &Self) -> Self::Repr {
-                Self::Repr {
+                #diff_name {
                     #(#names: self.#names.diff(&other.#names)),*
                 }
             }
@@ -73,8 +79,12 @@ fn derive_unnamed(
     diff_name: &Ident,
     fields: &Punctuated<Field, Comma>,
 ) -> TokenStream {
-    let (numbers, types): (Vec<_>, Vec<_>) =
-        fields.iter().map(|field| &field.ty).enumerate().unzip();
+    let (numbers, types): (Vec<_>, Vec<_>) = fields
+        .iter()
+        .map(|field| &field.ty)
+        .enumerate()
+        .map(|(a, b)| (Index::from(a), b))
+        .unzip();
     (quote! {
         #(#attr)*
         pub struct #diff_name (
@@ -85,7 +95,7 @@ fn derive_unnamed(
             type Repr = #diff_name;
 
             fn diff(&self, other: &Self) -> Self::Repr {
-                Self::Repr (
+                #diff_name (
                     #(self.#numbers.diff(&other.#numbers))*
                 )
             }
@@ -150,7 +160,10 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
                 "attr" => {
                     struct_attrs.attrs = parse(attr_named.tokens).unwrap();
                 }
-                _ => panic!("Unexpected name for diff attribute '{}'. Possible names: 'attr'", name),
+                _ => panic!(
+                    "Unexpected name for diff attribute '{}'. Possible names: 'attr'",
+                    name
+                ),
             }
         });
     struct_attrs
