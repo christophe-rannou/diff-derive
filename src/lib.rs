@@ -79,7 +79,7 @@ fn derive_unnamed(
         #(#attr)*
         pub struct #diff_name (
             #(pub <#types as Diff>::Repr),*
-        )
+        );
 
         impl Diff for #name {
             type Repr = #diff_name;
