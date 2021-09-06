@@ -20,16 +20,10 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
             let diff_name = &struct_attr.name.unwrap_or(format_ident!("{}Diff", name));
             let attr = &struct_attr.attrs.0;
 
-            let (fields, is_named) = match &data_struct.fields {
-                Fields::Named(fields) => (&fields.named, true),
-                Fields::Unnamed(fields) => (&fields.unnamed, false),
-                Fields::Unit => panic!("Cannot derive Diff on unit struct"),
-            };
-
-            if is_named {
-                derive_named(attr, name, diff_name, fields)
-            } else {
-                derive_unnamed(attr, name, diff_name, fields)
+            match &data_struct.fields {
+                Fields::Named(fields) => derive_named(attr, name, diff_name, &fields.named),
+                Fields::Unnamed(fields) => derive_unnamed(attr, name, diff_name, &fields.unnamed),
+                Fields::Unit => derive_unit(name),
             }
         }
         _ => todo!(),
@@ -167,6 +161,29 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
             }
         });
     struct_attrs
+}
+
+fn derive_unit(
+    name: &Ident,
+) -> TokenStream {
+    (quote! {
+        impl Diff for #name {
+            type Repr = ();
+
+            fn diff(&self, other: &Self) -> Self::Repr {
+                ()
+            }
+
+            fn apply(&mut self, diff: &Self::Repr) {
+                ()
+            }
+
+            fn identity() -> Self {
+                Self
+            }
+        }
+    })
+    .into()
 }
 
 // fn parse_field_attributes(attrs: &[Attribute]) -> FieldAttributes {
