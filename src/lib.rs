@@ -5,17 +5,18 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    parenthesized, parse, parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields,
-    Ident, Index,
+    parenthesized, parse, Attribute, Data, DeriveInput, Error, Field, Fields,
+    Ident, Index
 };
+use proc_macro2::TokenStream as Tokens;
 
 #[proc_macro_derive(Diff, attributes(diff))]
 pub fn diff_derive(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let struct_attr = parse_struct_attributes(&input.attrs);
+    let input : DeriveInput = syn::parse(input.clone()).unwrap();
 
-    match input.data {
+    let v = match input.data {
         Data::Struct(data_struct) => {
+            let struct_attr = parse_struct_attributes(&input.attrs);
             let name = &input.ident;
             let diff_name = &struct_attr.name.unwrap_or(format_ident!("{}Diff", name));
             let attr = &struct_attr.attrs.0;
@@ -27,7 +28,9 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
             }
         }
         _ => todo!(),
-    }
+    };
+
+    v.into()
 }
 
 fn derive_named(
@@ -35,10 +38,10 @@ fn derive_named(
     name: &Ident,
     diff_name: &Ident,
     fields: &Punctuated<Field, Comma>,
-) -> TokenStream {
+) -> Tokens {
     let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-    (quote! {
+    quote! {
         #(#attr)*
         pub struct #diff_name {
             #(pub #names: <#types as Diff>::Repr),*
@@ -63,8 +66,7 @@ fn derive_named(
                 }
             }
         }
-    })
-    .into()
+    }
 }
 
 fn derive_unnamed(
@@ -72,7 +74,7 @@ fn derive_unnamed(
     name: &Ident,
     diff_name: &Ident,
     fields: &Punctuated<Field, Comma>,
-) -> TokenStream {
+) -> Tokens {
     let (numbers, types): (Vec<_>, Vec<_>) = fields
         .iter()
         .map(|field| &field.ty)
@@ -165,8 +167,8 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
 
 fn derive_unit(
     name: &Ident,
-) -> TokenStream {
-    (quote! {
+) -> Tokens {
+    quote! {
         impl Diff for #name {
             type Repr = ();
 
@@ -182,8 +184,7 @@ fn derive_unit(
                 Self
             }
         }
-    })
-    .into()
+    }
 }
 
 // fn parse_field_attributes(attrs: &[Attribute]) -> FieldAttributes {
