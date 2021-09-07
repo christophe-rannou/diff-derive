@@ -212,11 +212,11 @@ fn derive_enum(
                 let names = fields.named.iter().map(|field| &field.ident).collect::<Vec<_>>();
                 let types = fields.named.iter().map(|field| &field.ty).collect::<Vec<_>>();
 
-                quote! { #ident{#(#names: #types),*} }
+                quote! { #ident{#(#names: <#types as Diff>::Repr),*} }
             },
             Fields::Unnamed(fields) => {
                 let types = fields.unnamed.iter().map(|field| &field.ty).collect::<Vec<_>>();
-                quote! { #ident(#(#types),*) }
+                quote! { #ident(#(<#types as Diff>::Repr),*) }
             },
             Fields::Unit => quote! {
                 #ident
@@ -305,7 +305,6 @@ fn derive_enum(
                     .map(|x| syn::Ident::new(&format!("b{}", x), Span::call_site()))
                     .collect::<Vec<_>>();
                 quote! {
-                    Self::Repr::NoChange => {},
                     Self::Repr::#ident(#(#b),*) => {
                         if let Self::#ident(#(#a),*) = self {
                             #(#a.apply(#b));*;
@@ -316,7 +315,6 @@ fn derive_enum(
                 }
             },
             Fields::Unit => quote! {
-                Self::Repr::NoChange => {},
                 Self::Repr::#ident => *self = Self::#ident
             },
         }
@@ -352,6 +350,7 @@ fn derive_enum(
 
             fn apply(&mut self, diff: &Self::Repr) {
                 match diff {
+                    Self::Repr::NoChange => {},
                     #(#variants_apply_arms),*,
                 }
             }
