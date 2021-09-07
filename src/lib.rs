@@ -286,7 +286,6 @@ fn derive_enum(
                     .map(|x| syn::Ident::new(&format!("b_{}", x.ident.as_ref().unwrap()), Span::call_site()))
                     .collect::<Vec<_>>();
                 quote! {
-                    Self::Repr::NoChange => {},
                     Self::Repr::#ident{#(#i: #b),*} => {
                         if let Self::#ident{#(#i: #a),*} = self {
                             #(#a.apply(#b));*;
