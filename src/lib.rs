@@ -1,19 +1,18 @@
 extern crate proc_macro;
 use crate::proc_macro::TokenStream;
+use proc_macro2::Span;
+use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    parenthesized, parse, Attribute, Data, DeriveInput, Error, Field, Fields,
-    Ident, Index, DataEnum
+    parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields, Ident,
+    Index,
 };
-use proc_macro2::Span;
-use proc_macro2::TokenStream as Tokens;
 
 #[proc_macro_derive(Diff, attributes(diff))]
-pub fn diff_derive(input: TokenStream) -> TokenStream
-{
+pub fn diff_derive(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
 
     match input.data {
@@ -37,7 +36,8 @@ pub fn diff_derive(input: TokenStream) -> TokenStream
             derive_enum(attr, ident, diff_ident, &data_enum)
         }
         _ => todo!(),
-    }.into()
+    }
+    .into()
 }
 
 fn derive_named(
@@ -136,7 +136,7 @@ impl Parse for ParenAttr {
         parenthesized!(content in input);
         Ok(ParenAttr {
             name,
-            tokens: content.parse::<proc_macro2::TokenStream>()?.into(),
+            tokens: content.parse::<Tokens>()?.into(),
         })
     }
 }
@@ -162,8 +162,11 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
                 "attr" => {
                     struct_attrs.attrs = parse(attr_named.tokens).unwrap();
                 }
+                "name" => {
+                    struct_attrs.name = parse(attr_named.tokens).unwrap();
+                }
                 _ => panic!(
-                    "Unexpected name for diff attribute '{}'. Possible names: 'attr'",
+                    "Unexpected name for diff attribute '{}'. Possible names: 'attr', 'name'",
                     name
                 ),
             }
@@ -171,9 +174,7 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
     struct_attrs
 }
 
-fn derive_unit(
-    ident: &Ident,
-) -> Tokens {
+fn derive_unit(ident: &Ident) -> Tokens {
     quote! {
         impl Diff for #ident {
             type Repr = ();
@@ -201,76 +202,118 @@ fn derive_enum(
 ) -> Tokens {
     let first = data_enum.variants.first().unwrap();
     let first_ident = &first.ident;
-    let first_names = first.fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
-    let first_types = first.fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    let first_names = first
+        .fields
+        .iter()
+        .map(|field| &field.ident)
+        .collect::<Vec<_>>();
+    let first_types = first
+        .fields
+        .iter()
+        .map(|field| &field.ty)
+        .collect::<Vec<_>>();
 
-    let variants_type_decl = data_enum.variants.iter().map(|variant| {
-        let ident = &variant.ident;
-        match &variant.fields {
-            Fields::Named(fields) => {
-                let names = fields.named.iter().map(|field| &field.ident).collect::<Vec<_>>();
-                let types = fields.named.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    let variants_type_decl = data_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let ident = &variant.ident;
+            match &variant.fields {
+                Fields::Named(fields) => {
+                    let names = fields
+                        .named
+                        .iter()
+                        .map(|field| &field.ident)
+                        .collect::<Vec<_>>();
+                    let types = fields
+                        .named
+                        .iter()
+                        .map(|field| &field.ty)
+                        .collect::<Vec<_>>();
 
-                quote! { #ident{#(#names: <#types as Diff>::Repr),*} }
-            },
-            Fields::Unnamed(fields) => {
-                let types = fields.unnamed.iter().map(|field| &field.ty).collect::<Vec<_>>();
-                quote! { #ident(#(<#types as Diff>::Repr),*) }
-            },
-            Fields::Unit => quote! {
-                #ident
-            },
-        }
-    }).collect::<Vec<Tokens>>();
-
-    let variants_diff_arms = data_enum.variants.iter().map(|variant| {
-        let ident = &variant.ident;
-        match &variant.fields {
-            Fields::Named(fields) => {
-                let t = fields.named.iter().map(|x|&x.ty).collect::<Vec<_>>();
-                let i = fields.named.iter().map(|x|&x.ident).collect::<Vec<_>>();
-                let a = fields.named.iter()
-                    .map(|x| syn::Ident::new(&format!("a_{}", x.ident.as_ref().unwrap()), Span::call_site()))
-                    .collect::<Vec<_>>();
-                let b = fields.named.iter()
-                    .map(|x| syn::Ident::new(&format!("b_{}", x.ident.as_ref().unwrap()), Span::call_site()))
-                    .collect::<Vec<_>>();
-                quote! {
-                    (Self::#ident{#(#i: #a),*}, Self::#ident{#(#i: #b),*}) =>
-                        if #(#a == #b)&&* {
-                            Self::Repr::NoChange
-                        } else {
-                            #diff_ident::#ident{#(#i: #a.diff(#b)),*}
-                        },
-                    (_, Self::#ident{#(#i: #b),*}) =>
-                        #diff_ident::#ident{#(#i: <#t as Diff>::identity().diff(#b)),*}
+                    quote! { #ident{#(#names: <#types as Diff>::Repr),*} }
                 }
-            },
-            Fields::Unnamed(fields) => {
-                let t = fields.unnamed.iter().map(|x|&x.ty).collect::<Vec<_>>();
-                let a = (0..fields.unnamed.len())
-                    .map(|x| syn::Ident::new(&format!("a{}", x), Span::call_site()))
-                    .collect::<Vec<_>>();
-                let b = (0..fields.unnamed.len())
-                    .map(|x| syn::Ident::new(&format!("b{}", x), Span::call_site()))
-                    .collect::<Vec<_>>();
-                quote! {
-                    (Self::#ident(#(#a),*), Self::#ident(#(#b),*)) =>
-                        if #(#a == #b)&&* {
-                            Self::Repr::NoChange
-                        } else {
-                            #diff_ident::#ident(#(#a.diff(#b)),*)
-                        },
-                    (_, Self::#ident(#(#b),*)) =>
-                        #diff_ident::#ident(#(<#t as Diff>::identity().diff(#b)),*)
+                Fields::Unnamed(fields) => {
+                    let types = fields
+                        .unnamed
+                        .iter()
+                        .map(|field| &field.ty)
+                        .collect::<Vec<_>>();
+                    quote! { #ident(#(<#types as Diff>::Repr),*) }
                 }
-            },
-            Fields::Unit => quote! {
-                (Self::#ident, Self::#ident) => Self::Repr::NoChange,
-                (_, Self::#ident) => Self::Repr::#ident
-            },
-        }
-    }).collect::<Vec<Tokens>>();
+                Fields::Unit => quote! {
+                    #ident
+                },
+            }
+        })
+        .collect::<Vec<Tokens>>();
+
+    let variants_diff_arms = data_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let ident = &variant.ident;
+            match &variant.fields {
+                Fields::Named(fields) => {
+                    let t = fields.named.iter().map(|x| &x.ty).collect::<Vec<_>>();
+                    let i = fields.named.iter().map(|x| &x.ident).collect::<Vec<_>>();
+                    let a = fields
+                        .named
+                        .iter()
+                        .map(|x| {
+                            syn::Ident::new(
+                                &format!("a_{}", x.ident.as_ref().unwrap()),
+                                Span::call_site(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let b = fields
+                        .named
+                        .iter()
+                        .map(|x| {
+                            syn::Ident::new(
+                                &format!("b_{}", x.ident.as_ref().unwrap()),
+                                Span::call_site(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    quote! {
+                        (Self::#ident{#(#i: #a),*}, Self::#ident{#(#i: #b),*}) =>
+                            if #(#a == #b)&&* {
+                                Self::Repr::NoChange
+                            } else {
+                                #diff_ident::#ident{#(#i: #a.diff(#b)),*}
+                            },
+                        (_, Self::#ident{#(#i: #b),*}) =>
+                            #diff_ident::#ident{#(#i: <#t as Diff>::identity().diff(#b)),*}
+                    }
+                }
+                Fields::Unnamed(fields) => {
+                    let t = fields.unnamed.iter().map(|x| &x.ty).collect::<Vec<_>>();
+                    let a = (0..fields.unnamed.len())
+                        .map(|x| syn::Ident::new(&format!("a{}", x), Span::call_site()))
+                        .collect::<Vec<_>>();
+                    let b = (0..fields.unnamed.len())
+                        .map(|x| syn::Ident::new(&format!("b{}", x), Span::call_site()))
+                        .collect::<Vec<_>>();
+                    quote! {
+                        (Self::#ident(#(#a),*), Self::#ident(#(#b),*)) =>
+                            if #(#a == #b)&&* {
+                                Self::Repr::NoChange
+                            } else {
+                                #diff_ident::#ident(#(#a.diff(#b)),*)
+                            },
+                        (_, Self::#ident(#(#b),*)) =>
+                            #diff_ident::#ident(#(<#t as Diff>::identity().diff(#b)),*)
+                    }
+                }
+                Fields::Unit => quote! {
+                    (Self::#ident, Self::#ident) => Self::Repr::NoChange,
+                    (_, Self::#ident) => Self::Repr::#ident
+                },
+            }
+        })
+        .collect::<Vec<Tokens>>();
 
     let variants_apply_arms = data_enum.variants.iter().map(|variant| {
         let ident = &variant.ident;
@@ -359,7 +402,6 @@ fn derive_enum(
         }
     }
 }
-
 
 // fn parse_field_attributes(attrs: &[Attribute]) -> FieldAttributes {
 //     let field_attrs = FieldAttributes::default();
