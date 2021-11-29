@@ -8,49 +8,43 @@ use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
     parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields, Ident,
-    Index,
+    Index, Token, VisPublic, Visibility,
 };
 
 #[proc_macro_derive(Diff, attributes(diff))]
 pub fn diff_derive(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse(input).unwrap();
 
-    match input.data {
-        Data::Struct(data_struct) => {
-            let struct_attr = parse_struct_attributes(&input.attrs);
-            let ident = &input.ident;
-            let diff_ident = &struct_attr.name.unwrap_or(format_ident!("{}Diff", ident));
-            let attr = &struct_attr.attrs.0;
+    let ident = input.ident;
+    let attrs = parse_struct_attributes(&input.attrs, &ident);
 
-            match &data_struct.fields {
-                Fields::Named(fields) => derive_named(attr, ident, diff_ident, &fields.named),
-                Fields::Unnamed(fields) => derive_unnamed(attr, ident, diff_ident, &fields.unnamed),
-                Fields::Unit => derive_unit(ident),
-            }
-        }
-        Data::Enum(data_enum) => {
-            let struct_attr = parse_struct_attributes(&input.attrs);
-            let ident = &input.ident;
-            let diff_ident = &struct_attr.name.unwrap_or(format_ident!("{}Diff", ident));
-            let attr = &struct_attr.attrs.0;
-            derive_enum(attr, ident, diff_ident, &data_enum)
-        }
+    match input.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
+            Fields::Named(fields) => derive_named(attrs, ident, &fields.named),
+            Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed),
+            Fields::Unit => derive_unit(ident),
+        },
+        Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum),
         _ => todo!(),
     }
     .into()
 }
 
 fn derive_named(
-    attr: &[Attribute],
-    ident: &Ident,
-    diff_ident: &Ident,
+    attrs: StructAttributes,
+    ident: Ident,
     fields: &Punctuated<Field, Comma>,
 ) -> Tokens {
+    let attr = attrs.attrs;
+    let diff_ident = attrs.name;
+    let visibility = attrs.visibility;
+
     let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+
     quote! {
         #(#attr)*
-        pub struct #diff_ident {
+        #visibility struct #diff_ident {
             #(pub #names: <#types as Diff>::Repr),*
         }
 
@@ -77,11 +71,14 @@ fn derive_named(
 }
 
 fn derive_unnamed(
-    attr: &[Attribute],
-    ident: &Ident,
-    diff_ident: &Ident,
+    attrs: StructAttributes,
+    ident: Ident,
     fields: &Punctuated<Field, Comma>,
 ) -> Tokens {
+    let attr = attrs.attrs;
+    let diff_ident = attrs.name;
+    let visibility = attrs.visibility;
+
     let (numbers, types): (Vec<_>, Vec<_>) = fields
         .iter()
         .map(|field| &field.ty)
@@ -90,7 +87,7 @@ fn derive_unnamed(
         .unzip();
     quote! {
         #(#attr)*
-        pub struct #diff_ident (
+        #visibility struct #diff_ident (
             #(pub <#types as Diff>::Repr),*
         );
 
@@ -117,10 +114,17 @@ fn derive_unnamed(
 }
 
 #[derive(Default)]
-struct StructAttributes {
+struct StructAttributesRaw {
     name: Option<Ident>,
-    visible: bool,
+    visibility: Option<Visibility>,
     attrs: OuterAttributes,
+}
+
+/// Contains top-level attributes for structs and enums
+struct StructAttributes {
+    name: Ident,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
 }
 
 /// A named attribute with unspecified tokens inside parentheses
@@ -150,8 +154,8 @@ impl Parse for OuterAttributes {
     }
 }
 
-fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
-    let mut struct_attrs = StructAttributes::default();
+fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> StructAttributes {
+    let mut raw = StructAttributesRaw::default();
     attrs
         .iter()
         .filter(|a| a.path.is_ident("diff"))
@@ -160,21 +164,32 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
             let name = attr_named.name.to_string();
             match name.as_ref() {
                 "attr" => {
-                    struct_attrs.attrs = parse(attr_named.tokens).unwrap();
+                    raw.attrs = parse(attr_named.tokens).unwrap();
                 }
                 "name" => {
-                    struct_attrs.name = parse(attr_named.tokens).unwrap();
+                    raw.name = Some(parse(attr_named.tokens).unwrap());
+                }
+                "visibility" => {
+                    raw.visibility = Some(parse(attr_named.tokens).unwrap());
                 }
                 _ => panic!(
-                    "Unexpected name for diff attribute '{}'. Possible names: 'attr', 'name'",
+                    "Unexpected name for diff attribute '{}'. Possible names: 'attr', 'name', 'visibility'",
                     name
                 ),
             }
         });
-    struct_attrs
+    StructAttributes {
+        name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
+        visibility: raw.visibility.unwrap_or_else(|| {
+            Visibility::Public(VisPublic {
+                pub_token: <Token![pub]>::default(),
+            })
+        }),
+        attrs: raw.attrs.0,
+    }
 }
 
-fn derive_unit(ident: &Ident) -> Tokens {
+fn derive_unit(ident: Ident) -> Tokens {
     quote! {
         impl Diff for #ident {
             type Repr = ();
@@ -194,12 +209,11 @@ fn derive_unit(ident: &Ident) -> Tokens {
     }
 }
 
-fn derive_enum(
-    attr: &[Attribute],
-    ident: &Ident,
-    diff_ident: &Ident,
-    data_enum: &DataEnum,
-) -> Tokens {
+fn derive_enum(attrs: StructAttributes, ident: Ident, data_enum: &DataEnum) -> Tokens {
+    let attr = attrs.attrs;
+    let diff_ident = attrs.name;
+    let visibility = attrs.visibility;
+
     let first = data_enum.variants.first().unwrap();
     let first_ident = &first.ident;
     let first_names = first
@@ -375,7 +389,7 @@ fn derive_enum(
 
     quote! {
         #(#attr)*
-        pub enum #diff_ident {
+        #visibility enum #diff_ident {
             NoChange,
             #(#variants_type_decl),*,
         }
