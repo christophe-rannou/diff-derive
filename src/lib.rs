@@ -14,27 +14,27 @@ use proc_macro2::TokenStream as Tokens;
 #[proc_macro_derive(Diff, attributes(diff))]
 pub fn diff_derive(input: TokenStream) -> TokenStream
 {
-    let input: DeriveInput = syn::parse(input.clone()).unwrap();
+    let input: DeriveInput = syn::parse(input).unwrap();
 
     match input.data {
         Data::Struct(data_struct) => {
             let struct_attr = parse_struct_attributes(&input.attrs);
-            let name = &input.ident;
-            let diff_name = &struct_attr.name.unwrap_or(format_ident!("{}Diff", name));
+            let ident = &input.ident;
+            let diff_ident = &struct_attr.name.unwrap_or(format_ident!("{}Diff", ident));
             let attr = &struct_attr.attrs.0;
 
             match &data_struct.fields {
-                Fields::Named(fields) => derive_named(attr, name, diff_name, &fields.named),
-                Fields::Unnamed(fields) => derive_unnamed(attr, name, diff_name, &fields.unnamed),
-                Fields::Unit => derive_unit(name),
+                Fields::Named(fields) => derive_named(attr, ident, diff_ident, &fields.named),
+                Fields::Unnamed(fields) => derive_unnamed(attr, ident, diff_ident, &fields.unnamed),
+                Fields::Unit => derive_unit(ident),
             }
         }
         Data::Enum(data_enum) => {
             let struct_attr = parse_struct_attributes(&input.attrs);
-            let name = &input.ident;
-            let diff_name = &struct_attr.name.unwrap_or(format_ident!("{}Diff", name));
+            let ident = &input.ident;
+            let diff_ident = &struct_attr.name.unwrap_or(format_ident!("{}Diff", ident));
             let attr = &struct_attr.attrs.0;
-            derive_enum(attr, name, diff_name, &data_enum)
+            derive_enum(attr, ident, diff_ident, &data_enum)
         }
         _ => todo!(),
     }.into()
@@ -42,23 +42,23 @@ pub fn diff_derive(input: TokenStream) -> TokenStream
 
 fn derive_named(
     attr: &[Attribute],
-    name: &Ident,
-    diff_name: &Ident,
+    ident: &Ident,
+    diff_ident: &Ident,
     fields: &Punctuated<Field, Comma>,
 ) -> Tokens {
     let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
     quote! {
         #(#attr)*
-        pub struct #diff_name {
+        pub struct #diff_ident {
             #(pub #names: <#types as Diff>::Repr),*
         }
 
-        impl Diff for #name {
-            type Repr = #diff_name;
+        impl Diff for #ident {
+            type Repr = #diff_ident;
 
             fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_name {
+                #diff_ident {
                     #(#names: self.#names.diff(&other.#names)),*
                 }
             }
@@ -78,8 +78,8 @@ fn derive_named(
 
 fn derive_unnamed(
     attr: &[Attribute],
-    name: &Ident,
-    diff_name: &Ident,
+    ident: &Ident,
+    diff_ident: &Ident,
     fields: &Punctuated<Field, Comma>,
 ) -> Tokens {
     let (numbers, types): (Vec<_>, Vec<_>) = fields
@@ -88,17 +88,17 @@ fn derive_unnamed(
         .enumerate()
         .map(|(a, b)| (Index::from(a), b))
         .unzip();
-    (quote! {
+    quote! {
         #(#attr)*
-        pub struct #diff_name (
+        pub struct #diff_ident (
             #(pub <#types as Diff>::Repr),*
         );
 
-        impl Diff for #name {
-            type Repr = #diff_name;
+        impl Diff for #ident {
+            type Repr = #diff_ident;
 
             fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_name (
+                #diff_ident (
                     #(self.#numbers.diff(&other.#numbers))*
                 )
             }
@@ -113,8 +113,7 @@ fn derive_unnamed(
                 )
             }
         }
-    })
-    .into()
+    }
 }
 
 #[derive(Default)]
@@ -173,10 +172,10 @@ fn parse_struct_attributes(attrs: &[Attribute]) -> StructAttributes {
 }
 
 fn derive_unit(
-    name: &Ident,
+    ident: &Ident,
 ) -> Tokens {
     quote! {
-        impl Diff for #name {
+        impl Diff for #ident {
             type Repr = ();
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -196,8 +195,8 @@ fn derive_unit(
 
 fn derive_enum(
     attr: &[Attribute],
-    name: &Ident,
-    diff_name: &Ident,
+    ident: &Ident,
+    diff_ident: &Ident,
     data_enum: &DataEnum,
 ) -> Tokens {
     let first = data_enum.variants.first().unwrap();
@@ -241,10 +240,10 @@ fn derive_enum(
                         if #(#a == #b)&&* {
                             Self::Repr::NoChange
                         } else {
-                            #diff_name::#ident{#(#i: #a.diff(#b)),*}
+                            #diff_ident::#ident{#(#i: #a.diff(#b)),*}
                         },
                     (_, Self::#ident{#(#i: #b),*}) =>
-                        #diff_name::#ident{#(#i: <#t as Diff>::identity().diff(#b)),*}
+                        #diff_ident::#ident{#(#i: <#t as Diff>::identity().diff(#b)),*}
                 }
             },
             Fields::Unnamed(fields) => {
@@ -260,10 +259,10 @@ fn derive_enum(
                         if #(#a == #b)&&* {
                             Self::Repr::NoChange
                         } else {
-                            #diff_name::#ident(#(#a.diff(#b)),*)
+                            #diff_ident::#ident(#(#a.diff(#b)),*)
                         },
                     (_, Self::#ident(#(#b),*)) =>
-                        #diff_name::#ident(#(<#t as Diff>::identity().diff(#b)),*)
+                        #diff_ident::#ident(#(<#t as Diff>::identity().diff(#b)),*)
                 }
             },
             Fields::Unit => quote! {
@@ -333,13 +332,13 @@ fn derive_enum(
 
     quote! {
         #(#attr)*
-        pub enum #diff_name {
+        pub enum #diff_ident {
             NoChange,
             #(#variants_type_decl),*,
         }
 
-        impl Diff for #name {
-            type Repr = #diff_name;
+        impl Diff for #ident {
+            type Repr = #diff_ident;
 
             fn diff(&self, other: &Self) -> Self::Repr {
                 match (self, other) {
