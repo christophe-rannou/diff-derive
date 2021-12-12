@@ -5,20 +5,28 @@ use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::token::Comma;
 use syn::{
     parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields, Ident,
-    Index, Token, VisPublic, Visibility,
+    Index, Result as SynResult, Token, VisPublic, Visibility,
 };
 
 #[proc_macro_derive(Diff, attributes(diff))]
 pub fn diff_derive(input: TokenStream) -> TokenStream {
-    let input: DeriveInput = syn::parse(input).unwrap();
+    match derive_or_error(input) {
+        Err(err) => err.to_compile_error().into(),
+        Ok(result) => result,
+    }
+}
 
+fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
+    let input: DeriveInput = syn::parse(input)?;
     let ident = input.ident;
-    let attrs = parse_struct_attributes(&input.attrs, &ident);
 
-    match input.data {
+    let attrs = parse_struct_attributes(&input.attrs, &ident)?;
+
+    let tokens = match input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => derive_named(attrs, ident, &fields.named),
             Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed),
@@ -27,7 +35,8 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
         Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum),
         _ => todo!(),
     }
-    .into()
+    .into();
+    Ok(tokens)
 }
 
 fn derive_named(
@@ -130,7 +139,7 @@ struct StructAttributes {
 /// A named attribute with unspecified tokens inside parentheses
 struct ParenAttr {
     name: Ident,
-    tokens: TokenStream,
+    tokens: Tokens,
 }
 
 impl Parse for ParenAttr {
@@ -140,7 +149,7 @@ impl Parse for ParenAttr {
         parenthesized!(content in input);
         Ok(ParenAttr {
             name,
-            tokens: content.parse::<Tokens>()?.into(),
+            tokens: content.parse::<Tokens>()?,
         })
     }
 }
@@ -154,31 +163,35 @@ impl Parse for OuterAttributes {
     }
 }
 
-fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> StructAttributes {
+fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> SynResult<StructAttributes> {
     let mut raw = StructAttributesRaw::default();
     attrs
         .iter()
-        .filter(|a| a.path.is_ident("diff"))
-        .for_each(|a| {
-            let attr_named: ParenAttr = a.parse_args().unwrap();
+        .try_for_each(|attr| {
+            let attr_named: ParenAttr = attr.parse_args()?;
             let name = attr_named.name.to_string();
+
             match name.as_ref() {
                 "attr" => {
-                    raw.attrs = parse(attr_named.tokens).unwrap();
+                    raw.attrs = parse(attr_named.tokens.into())?
                 }
                 "name" => {
-                    raw.name = Some(parse(attr_named.tokens).unwrap());
+                    raw.name = Some(parse(attr_named.tokens.into())?)
                 }
                 "visibility" => {
-                    raw.visibility = Some(parse(attr_named.tokens).unwrap());
+                    raw.visibility = Some(parse(attr_named.tokens.into())?)
                 }
-                _ => panic!(
-                    "Unexpected name for diff attribute '{}'. Possible names: 'attr', 'name', 'visibility'",
-                    name
-                ),
+                _ => {
+                    return Err(
+                        Error::new(attr_named.name.span(),
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
+                    ))
+                },
             }
-        });
-    StructAttributes {
+
+            Ok(())
+        })?;
+    Ok(StructAttributes {
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
         visibility: raw.visibility.unwrap_or_else(|| {
             Visibility::Public(VisPublic {
@@ -186,7 +199,7 @@ fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> StructAttribut
             })
         }),
         attrs: raw.attrs.0,
-    }
+    })
 }
 
 fn derive_unit(ident: Ident) -> Tokens {
