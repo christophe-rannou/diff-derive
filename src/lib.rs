@@ -122,86 +122,6 @@ fn derive_unnamed(
     }
 }
 
-#[derive(Default)]
-struct StructAttributesRaw {
-    name: Option<Ident>,
-    visibility: Option<Visibility>,
-    attrs: OuterAttributes,
-}
-
-/// Contains top-level attributes for structs and enums
-struct StructAttributes {
-    name: Ident,
-    visibility: Visibility,
-    attrs: Vec<Attribute>,
-}
-
-/// A named attribute with unspecified tokens inside parentheses
-struct ParenAttr {
-    name: Ident,
-    tokens: Tokens,
-}
-
-impl Parse for ParenAttr {
-    fn parse(input: ParseStream) -> Result<Self, Error> {
-        let name = input.parse()?;
-        let content;
-        parenthesized!(content in input);
-        Ok(ParenAttr {
-            name,
-            tokens: content.parse::<Tokens>()?,
-        })
-    }
-}
-
-#[derive(Default)]
-struct OuterAttributes(Vec<Attribute>);
-
-impl Parse for OuterAttributes {
-    fn parse(input: ParseStream) -> Result<Self, Error> {
-        Ok(Self(input.call(Attribute::parse_outer)?))
-    }
-}
-
-fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> SynResult<StructAttributes> {
-    let mut raw = StructAttributesRaw::default();
-    attrs
-        .iter()
-        .try_for_each(|attr| {
-            let attr_named: ParenAttr = attr.parse_args()?;
-            let name = attr_named.name.to_string();
-
-            match name.as_ref() {
-                "attr" => {
-                    raw.attrs = parse(attr_named.tokens.into())?
-                }
-                "name" => {
-                    raw.name = Some(parse(attr_named.tokens.into())?)
-                }
-                "visibility" => {
-                    raw.visibility = Some(parse(attr_named.tokens.into())?)
-                }
-                _ => {
-                    return Err(
-                        Error::new(attr_named.name.span(),
-                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
-                    ))
-                },
-            }
-
-            Ok(())
-        })?;
-    Ok(StructAttributes {
-        name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
-        visibility: raw.visibility.unwrap_or_else(|| {
-            Visibility::Public(VisPublic {
-                pub_token: <Token![pub]>::default(),
-            })
-        }),
-        attrs: raw.attrs.0,
-    })
-}
-
 fn derive_unit(ident: Ident) -> Tokens {
     quote! {
         impl Diff for #ident {
@@ -430,8 +350,95 @@ fn derive_enum(attrs: StructAttributes, ident: Ident, data_enum: &DataEnum) -> T
     }
 }
 
-// fn parse_field_attributes(attrs: &[Attribute]) -> FieldAttributes {
-//     let field_attrs = FieldAttributes::default();
-//     // iter
-//     field_attrs
-// }
+#[derive(Default)]
+struct StructAttributesRaw {
+    name: Option<Ident>,
+    visibility: Option<Visibility>,
+    attrs: OuterAttributes,
+}
+
+/// Contains top-level attributes for structs and enums
+struct StructAttributes {
+    name: Ident,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+}
+
+#[derive(Default)]
+struct FieldAttributesRaw {
+    name: Option<Ident>,
+    visibility: Option<Visibility>,
+    attrs: OuterAttributes,
+}
+
+struct FieldAttributes {
+    name: Ident,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+}
+
+/// A named attribute with unspecified tokens inside parentheses
+struct ParenAttr {
+    name: Ident,
+    tokens: Tokens,
+}
+
+impl Parse for ParenAttr {
+    fn parse(input: ParseStream) -> Result<Self, Error> {
+        let name = input.parse()?;
+        let content;
+        parenthesized!(content in input);
+        Ok(ParenAttr {
+            name,
+            tokens: content.parse::<Tokens>()?,
+        })
+    }
+}
+
+#[derive(Default)]
+struct OuterAttributes(Vec<Attribute>);
+
+impl Parse for OuterAttributes {
+    fn parse(input: ParseStream) -> Result<Self, Error> {
+        Ok(Self(input.call(Attribute::parse_outer)?))
+    }
+}
+
+fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> SynResult<StructAttributes> {
+    let mut raw = StructAttributesRaw::default();
+    attrs
+        .iter()
+        .try_for_each(|attr| {
+            let attr_named: ParenAttr = attr.parse_args()?;
+            let name = attr_named.name.to_string();
+
+            match name.as_ref() {
+                "attr" => {
+                    raw.attrs = parse(attr_named.tokens.into())?
+                }
+                "name" => {
+                    raw.name = Some(parse(attr_named.tokens.into())?)
+                }
+                "visibility" => {
+                    raw.visibility = Some(parse(attr_named.tokens.into())?)
+                }
+                _ => {
+                    return Err(
+                        Error::new(attr_named.name.span(),
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
+                    ))
+                },
+            }
+
+            Ok(())
+        })?;
+    Ok(StructAttributes {
+        name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
+        visibility: raw.visibility.unwrap_or_else(|| {
+            Visibility::Public(VisPublic {
+                pub_token: <Token![pub]>::default(),
+            })
+        }),
+        attrs: raw.attrs.0,
+    })
+}
