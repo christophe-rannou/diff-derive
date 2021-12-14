@@ -5,11 +5,10 @@ use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::spanned::Spanned;
 use syn::token::Comma;
 use syn::{
     parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields, Ident,
-    Index, Result as SynResult, Token, VisPublic, Visibility,
+    Index, Result as SynResult, Visibility,
 };
 
 #[proc_macro_derive(Diff, attributes(diff))]
@@ -22,9 +21,10 @@ pub fn diff_derive(input: TokenStream) -> TokenStream {
 
 fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
     let input: DeriveInput = syn::parse(input)?;
+    let vis = input.vis;
     let ident = input.ident;
 
-    let attrs = parse_struct_attributes(&input.attrs, &ident)?;
+    let attrs = parse_struct_attributes(&input.attrs, vis, &ident)?;
 
     let tokens = match input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
@@ -50,6 +50,7 @@ fn derive_named(
 
     let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
     let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    // let attrs = fields.iter().map(|field| &field.attrs).collect::<Vec<_>>();
 
     quote! {
         #(#attr)*
@@ -404,7 +405,11 @@ impl Parse for OuterAttributes {
     }
 }
 
-fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> SynResult<StructAttributes> {
+fn parse_struct_attributes(
+    attrs: &[Attribute],
+    vis: Visibility,
+    ident: &Ident,
+) -> SynResult<StructAttributes> {
     let mut raw = StructAttributesRaw::default();
     attrs
         .iter()
@@ -434,11 +439,7 @@ fn parse_struct_attributes(attrs: &[Attribute], ident: &Ident) -> SynResult<Stru
         })?;
     Ok(StructAttributes {
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
-        visibility: raw.visibility.unwrap_or_else(|| {
-            Visibility::Public(VisPublic {
-                pub_token: <Token![pub]>::default(),
-            })
-        }),
+        visibility: raw.visibility.unwrap_or(vis),
         attrs: raw.attrs.0,
     })
 }
