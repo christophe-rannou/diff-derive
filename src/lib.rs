@@ -55,7 +55,9 @@ fn derive_named(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let types = fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
-    let names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
+    let names = fields.iter().map(|f| &f.ident).collect::<Vec<_>>();
+
+    let diff_names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
     let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
     let visbs = field_attrs
         .iter()
@@ -67,7 +69,7 @@ fn derive_named(
         #visibility struct #diff_ident {
             #(
                 #(#attrs)*
-                #visbs #names: <#types as Diff>::Repr
+                #visbs #diff_names: <#types as Diff>::Repr
             ),*
         }
 
@@ -76,12 +78,12 @@ fn derive_named(
 
             fn diff(&self, other: &Self) -> Self::Repr {
                 #diff_ident {
-                    #(#names: self.#names.diff(&other.#names)),*
+                    #(#diff_names: self.#names.diff(&other.#names)),*
                 }
             }
 
             fn apply(&mut self, diff: &Self::Repr) {
-                #(self.#names.apply(&diff.#names);)*
+                #(self.#names.apply(&diff.#diff_names);)*
             }
 
             fn identity() -> Self {
