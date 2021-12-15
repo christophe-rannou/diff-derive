@@ -28,8 +28,8 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
 
     let tokens = match input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
-            Fields::Named(fields) => derive_named(attrs, ident, &fields.named),
-            Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed),
+            Fields::Named(fields) => derive_named(attrs, ident, &fields.named)?,
+            Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed)?,
             Fields::Unit => derive_unit(ident),
         },
         Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum),
@@ -43,19 +43,27 @@ fn derive_named(
     attrs: StructAttributes,
     ident: Ident,
     fields: &Punctuated<Field, Comma>,
-) -> Tokens {
+) -> SynResult<Tokens> {
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
 
-    let names = fields.iter().map(|field| &field.ident).collect::<Vec<_>>();
-    let types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-    // let attrs = fields.iter().map(|field| &field.attrs).collect::<Vec<_>>();
+    let field_attrs = fields
+        .iter()
+        .map(|field| parse_named_field_attributes(&field.attrs, &field.vis, field.ident.as_ref().unwrap()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let types = fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
+    let names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
+    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let visbs = field_attrs.iter().map(|f| &f.visibility).collect::<Vec<_>>();
 
-    quote! {
+    Ok(quote! {
         #(#attr)*
         #visibility struct #diff_ident {
-            #(pub #names: <#types as Diff>::Repr),*
+            #(
+                #(#attrs)*
+                #visbs #names: <#types as Diff>::Repr
+            ),*
         }
 
         impl Diff for #ident {
@@ -77,14 +85,14 @@ fn derive_named(
                 }
             }
         }
-    }
+    })
 }
 
 fn derive_unnamed(
     attrs: StructAttributes,
     ident: Ident,
     fields: &Punctuated<Field, Comma>,
-) -> Tokens {
+) -> SynResult<Tokens> {
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
@@ -95,7 +103,7 @@ fn derive_unnamed(
         .enumerate()
         .map(|(a, b)| (Index::from(a), b))
         .unzip();
-    quote! {
+    Ok(quote! {
         #(#attr)*
         #visibility struct #diff_ident (
             #(pub <#types as Diff>::Repr),*
@@ -120,7 +128,7 @@ fn derive_unnamed(
                 )
             }
         }
-    }
+    })
 }
 
 fn derive_unit(ident: Ident) -> Tokens {
@@ -366,14 +374,27 @@ struct StructAttributes {
 }
 
 #[derive(Default)]
-struct FieldAttributesRaw {
+struct NamedFieldAttributesRaw {
     name: Option<Ident>,
     visibility: Option<Visibility>,
     attrs: OuterAttributes,
 }
 
-struct FieldAttributes {
+/// Customizable attributes for fields
+struct NamedFieldAttributes {
     name: Ident,
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+}
+
+#[derive(Default)]
+struct UnnamedFieldAttributesRaw {
+    visibility: Option<Visibility>,
+    attrs: OuterAttributes,
+}
+
+/// Customizable attributes for fields
+struct UnnamedFieldAttributes {
     visibility: Visibility,
     attrs: Vec<Attribute>,
 }
@@ -440,6 +461,81 @@ fn parse_struct_attributes(
     Ok(StructAttributes {
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
         visibility: raw.visibility.unwrap_or(vis),
+        attrs: raw.attrs.0,
+    })
+}
+
+fn parse_named_field_attributes(
+    attrs: &[Attribute],
+    vis: &Visibility,
+    ident: &Ident,
+) -> SynResult<NamedFieldAttributes> {
+    let mut raw = NamedFieldAttributesRaw::default();
+    attrs
+        .iter()
+        .try_for_each(|attr| {
+            let attr_named: ParenAttr = attr.parse_args()?;
+            let name = attr_named.name.to_string();
+
+            match name.as_ref() {
+                "attr" => {
+                    raw.attrs = parse(attr_named.tokens.into())?
+                }
+                "name" => {
+                    raw.name = Some(parse(attr_named.tokens.into())?)
+                }
+                "visibility" => {
+                    raw.visibility = Some(parse(attr_named.tokens.into())?)
+                }
+                _ => {
+                    return Err(
+                        Error::new(attr_named.name.span(),
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
+                    ))
+                },
+            }
+
+            Ok(())
+        })?;
+    // if ident is None, this new name should also be none
+    Ok(NamedFieldAttributes {
+        name: raw.name.unwrap_or_else(|| ident.clone()),
+        visibility: raw.visibility.unwrap_or_else(|| vis.clone()),
+        attrs: raw.attrs.0,
+    })
+}
+
+fn parse_unnamed_field_attributes(
+    attrs: &[Attribute],
+    vis: &Visibility,
+) -> SynResult<UnnamedFieldAttributes> {
+    let mut raw = UnnamedFieldAttributesRaw::default();
+    attrs
+        .iter()
+        .try_for_each(|attr| {
+            let attr_named: ParenAttr = attr.parse_args()?;
+            let name = attr_named.name.to_string();
+
+            match name.as_ref() {
+                "attr" => {
+                    raw.attrs = parse(attr_named.tokens.into())?
+                }
+                "visibility" => {
+                    raw.visibility = Some(parse(attr_named.tokens.into())?)
+                }
+                _ => {
+                    return Err(
+                        Error::new(attr_named.name.span(),
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, visibility", name)
+                    ))
+                },
+            }
+
+            Ok(())
+        })?;
+    // if ident is None, this new name should also be none
+    Ok(UnnamedFieldAttributes {
+        visibility: raw.visibility.unwrap_or_else(|| vis.clone()),
         attrs: raw.attrs.0,
     })
 }
