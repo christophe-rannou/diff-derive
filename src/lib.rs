@@ -50,12 +50,17 @@ fn derive_named(
 
     let field_attrs = fields
         .iter()
-        .map(|field| parse_named_field_attributes(&field.attrs, &field.vis, field.ident.as_ref().unwrap()))
+        .map(|field| {
+            parse_named_field_attributes(&field.attrs, &field.vis, field.ident.as_ref().unwrap())
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let types = fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
     let names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
     let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
-    let visbs = field_attrs.iter().map(|f| &f.visibility).collect::<Vec<_>>();
+    let visbs = field_attrs
+        .iter()
+        .map(|f| &f.visibility)
+        .collect::<Vec<_>>();
 
     Ok(quote! {
         #(#attr)*
@@ -97,16 +102,30 @@ fn derive_unnamed(
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
 
+    let field_attrs = fields
+        .iter()
+        .map(|field| parse_unnamed_field_attributes(&field.attrs, &field.vis))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let (numbers, types): (Vec<_>, Vec<_>) = fields
         .iter()
         .map(|field| &field.ty)
         .enumerate()
         .map(|(a, b)| (Index::from(a), b))
         .unzip();
+    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let visbs = field_attrs
+        .iter()
+        .map(|f| &f.visibility)
+        .collect::<Vec<_>>();
+
     Ok(quote! {
         #(#attr)*
         #visibility struct #diff_ident (
-            #(pub <#types as Diff>::Repr),*
+            #(
+                #(#attrs)*
+                #visbs <#types as Diff>::Repr
+            ),*
         );
 
         impl Diff for #ident {
