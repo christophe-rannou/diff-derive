@@ -455,6 +455,7 @@ fn parse_struct_attributes(
     let mut raw = StructAttributesRaw::default();
     attrs
         .iter()
+        .filter(|a| a.path.is_ident("diff"))
         .try_for_each(|attr| {
             let attr_named: ParenAttr = attr.parse_args()?;
             let name = attr_named.name.to_string();
@@ -494,6 +495,7 @@ fn parse_named_field_attributes(
     let mut raw = NamedFieldAttributesRaw::default();
     attrs
         .iter()
+        .filter(|a| a.path.is_ident("diff"))
         .try_for_each(|attr| {
             let attr_named: ParenAttr = attr.parse_args()?;
             let name = attr_named.name.to_string();
@@ -518,7 +520,6 @@ fn parse_named_field_attributes(
 
             Ok(())
         })?;
-    // if ident is None, this new name should also be none
     Ok(NamedFieldAttributes {
         name: raw.name.unwrap_or_else(|| ident.clone()),
         visibility: raw.visibility.unwrap_or_else(|| vis.clone()),
@@ -533,6 +534,7 @@ fn parse_unnamed_field_attributes(
     let mut raw = UnnamedFieldAttributesRaw::default();
     attrs
         .iter()
+        .filter(|a| a.path.is_ident("diff"))
         .try_for_each(|attr| {
             let attr_named: ParenAttr = attr.parse_args()?;
             let name = attr_named.name.to_string();
@@ -554,7 +556,6 @@ fn parse_unnamed_field_attributes(
 
             Ok(())
         })?;
-    // if ident is None, this new name should also be none
     Ok(UnnamedFieldAttributes {
         visibility: raw.visibility.unwrap_or_else(|| vis.clone()),
         attrs: raw.attrs.0,
