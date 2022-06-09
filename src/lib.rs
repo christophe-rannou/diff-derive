@@ -3,12 +3,14 @@ use crate::proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};
+use std::iter::Peekable;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::token::Comma;
+use syn::token::{Comma, Where};
 use syn::{
-    parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields, Ident,
-    Index, Result as SynResult, Visibility,
+    parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields,
+    GenericParam, Generics, Ident, ImplGenerics, Index, Result as SynResult, TypeGenerics,
+    TypeParam, Visibility, WhereClause, WherePredicate,
 };
 
 #[proc_macro_derive(Diff, attributes(diff))]
@@ -26,27 +28,86 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
 
     let attrs = parse_struct_attributes(&input.attrs, vis, &ident)?;
 
+    let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
+
+    // Create a `T: Diff` predicate for each type param, and add it to
+    // the where clause
+    let where_clause_owned = type_where_clause(&input.generics, where_clause);
+    let where_clause_with_diff_predicates = where_clause_owned.as_ref().or(where_clause);
+    let generics = (
+        impl_generics,
+        type_generics,
+        where_clause_with_diff_predicates,
+    );
+
     let tokens = match input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
-            Fields::Named(fields) => derive_named(attrs, ident, &fields.named)?,
-            Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed)?,
+            Fields::Named(fields) => derive_named(attrs, ident, &fields.named, generics)?,
+            Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed, generics)?,
             Fields::Unit => derive_unit(ident),
         },
-        Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum),
+        Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum, generics),
         _ => todo!(),
     }
     .into();
     Ok(tokens)
 }
 
+fn type_where_clause(
+    generics: &Generics,
+    where_clause: Option<&WhereClause>,
+) -> Option<WhereClause> {
+    let mut where_predicates = type_where_predicates(generics);
+    if where_predicates.peek().is_some() {
+        let mut where_clause = match where_clause {
+            Some(where_clause) => where_clause.to_owned(),
+            None => WhereClause {
+                where_token: Where::default(),
+                predicates: Punctuated::default(),
+            },
+        };
+
+        where_predicates.for_each(|predicate| where_clause.predicates.push(predicate));
+        Some(where_clause)
+    } else {
+        None
+    }
+}
+
+fn type_where_predicates(
+    generics: &Generics,
+) -> Peekable<impl Iterator<Item = WherePredicate> + '_> {
+    let where_predicates = generics
+        .params
+        .iter()
+        .filter_map(|param| {
+            if let GenericParam::Type(TypeParam { ident, bounds, .. }) = param {
+                let bounds = if bounds.is_empty() {
+                    quote!(Diff)
+                } else {
+                    quote!(#bounds + Diff)
+                };
+                let where_predicate: WherePredicate = syn::parse2(quote! { #ident: #bounds })
+                    .expect("Failed to parse where predicate in diff_derive");
+                Some(where_predicate)
+            } else {
+                None
+            }
+        })
+        .peekable();
+    where_predicates
+}
+
 fn derive_named(
     attrs: StructAttributes,
     ident: Ident,
     fields: &Punctuated<Field, Comma>,
+    generics: (ImplGenerics<'_>, TypeGenerics<'_>, Option<&'_ WhereClause>),
 ) -> SynResult<Tokens> {
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
         .iter()
@@ -66,15 +127,15 @@ fn derive_named(
 
     Ok(quote! {
         #(#attr)*
-        #visibility struct #diff_ident {
+        #visibility struct #diff_ident #type_generics #where_clause {
             #(
                 #(#attrs)*
                 #visbs #diff_names: <#types as Diff>::Repr
             ),*
         }
 
-        impl Diff for #ident {
-            type Repr = #diff_ident;
+        impl #impl_generics Diff for #ident #type_generics #where_clause {
+            type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
                 #diff_ident {
@@ -99,10 +160,12 @@ fn derive_unnamed(
     attrs: StructAttributes,
     ident: Ident,
     fields: &Punctuated<Field, Comma>,
+    generics: (ImplGenerics<'_>, TypeGenerics<'_>, Option<&'_ WhereClause>),
 ) -> SynResult<Tokens> {
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
         .iter()
@@ -123,19 +186,19 @@ fn derive_unnamed(
 
     Ok(quote! {
         #(#attr)*
-        #visibility struct #diff_ident (
+        #visibility struct #diff_ident #type_generics (
             #(
                 #(#attrs)*
                 #visbs <#types as Diff>::Repr
             ),*
-        );
+        ) #where_clause ;
 
-        impl Diff for #ident {
-            type Repr = #diff_ident;
+        impl #impl_generics Diff for #ident #type_generics #where_clause {
+            type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
                 #diff_ident (
-                    #(self.#numbers.diff(&other.#numbers))*
+                    #(self.#numbers.diff(&other.#numbers)),*
                 )
             }
 
@@ -172,10 +235,16 @@ fn derive_unit(ident: Ident) -> Tokens {
     }
 }
 
-fn derive_enum(attrs: StructAttributes, ident: Ident, data_enum: &DataEnum) -> Tokens {
+fn derive_enum(
+    attrs: StructAttributes,
+    ident: Ident,
+    data_enum: &DataEnum,
+    generics: (ImplGenerics<'_>, TypeGenerics<'_>, Option<&'_ WhereClause>),
+) -> Tokens {
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let (impl_generics, type_generics, where_clause) = generics;
 
     let first = data_enum.variants.first().unwrap();
     let first_ident = &first.ident;
@@ -352,13 +421,13 @@ fn derive_enum(attrs: StructAttributes, ident: Ident, data_enum: &DataEnum) -> T
 
     quote! {
         #(#attr)*
-        #visibility enum #diff_ident {
+        #visibility enum #diff_ident #type_generics #where_clause {
             NoChange,
             #(#variants_type_decl),*,
         }
 
-        impl Diff for #ident {
-            type Repr = #diff_ident;
+        impl #impl_generics Diff for #ident #type_generics #where_clause {
+            type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
                 match (self, other) {
