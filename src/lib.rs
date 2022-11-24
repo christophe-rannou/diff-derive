@@ -30,7 +30,7 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
 
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
 
-    // Create a `T: Diff` predicate for each type param, and add it to
+    // Create a `T: ::diff::Diff` predicate for each type param, and add it to
     // the where clause
     let where_clause_owned = type_where_clause(&input.generics, where_clause);
     let where_clause_with_diff_predicates = where_clause_owned.as_ref().or(where_clause);
@@ -83,9 +83,9 @@ fn type_where_predicates(
         .filter_map(|param| {
             if let GenericParam::Type(TypeParam { ident, bounds, .. }) = param {
                 let bounds = if bounds.is_empty() {
-                    quote!(Diff)
+                    quote!(::diff::Diff)
                 } else {
-                    quote!(#bounds + Diff)
+                    quote!(#bounds + ::diff::Diff)
                 };
                 let where_predicate: WherePredicate = syn::parse2(quote! { #ident: #bounds })
                     .expect("Failed to parse where predicate in diff_derive");
@@ -130,11 +130,11 @@ fn derive_named(
         #visibility struct #diff_ident #type_generics #where_clause {
             #(
                 #(#attrs)*
-                #visbs #diff_names: <#types as Diff>::Repr
+                #visbs #diff_names: <#types as ::diff::Diff>::Repr
             ),*
         }
 
-        impl #impl_generics Diff for #ident #type_generics #where_clause {
+        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -149,7 +149,7 @@ fn derive_named(
 
             fn identity() -> Self {
                 Self {
-                    #(#names: <#types as Diff>::identity()),*
+                    #(#names: <#types as ::diff::Diff>::identity()),*
                 }
             }
         }
@@ -189,11 +189,11 @@ fn derive_unnamed(
         #visibility struct #diff_ident #type_generics (
             #(
                 #(#attrs)*
-                #visbs <#types as Diff>::Repr
+                #visbs <#types as ::diff::Diff>::Repr
             ),*
         ) #where_clause ;
 
-        impl #impl_generics Diff for #ident #type_generics #where_clause {
+        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -208,7 +208,7 @@ fn derive_unnamed(
 
             fn identity() -> Self {
                 Self (
-                    #(<#types as Diff>::identity()),*
+                    #(<#types as ::diff::Diff>::identity()),*
                 )
             }
         }
@@ -217,7 +217,7 @@ fn derive_unnamed(
 
 fn derive_unit(ident: Ident) -> Tokens {
     quote! {
-        impl Diff for #ident {
+        impl ::diff::Diff for #ident {
             type Repr = ();
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -277,7 +277,7 @@ fn derive_enum(
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
 
-                    quote! { #ident{#(#names: <#types as Diff>::Repr),*} }
+                    quote! { #ident{#(#names: <#types as ::diff::Diff>::Repr),*} }
                 }
                 Fields::Unnamed(fields) => {
                     let types = fields
@@ -285,7 +285,7 @@ fn derive_enum(
                         .iter()
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
-                    quote! { #ident(#(<#types as Diff>::Repr),*) }
+                    quote! { #ident(#(<#types as ::diff::Diff>::Repr),*) }
                 }
                 Fields::Unit => quote! {
                     #ident
@@ -331,7 +331,7 @@ fn derive_enum(
                                 #diff_ident::#ident{#(#i: #a.diff(#b)),*}
                             },
                         (_, Self::#ident{#(#i: #b),*}) =>
-                            #diff_ident::#ident{#(#i: <#t as Diff>::identity().diff(#b)),*}
+                            #diff_ident::#ident{#(#i: <#t as ::diff::Diff>::identity().diff(#b)),*}
                     }
                 }
                 Fields::Unnamed(fields) => {
@@ -350,7 +350,7 @@ fn derive_enum(
                                 #diff_ident::#ident(#(#a.diff(#b)),*)
                             },
                         (_, Self::#ident(#(#b),*)) =>
-                            #diff_ident::#ident(#(<#t as Diff>::identity().diff(#b)),*)
+                            #diff_ident::#ident(#(<#t as ::diff::Diff>::identity().diff(#b)),*)
                     }
                 }
                 Fields::Unit => quote! {
@@ -378,7 +378,7 @@ fn derive_enum(
                         if let Self::#ident{#(#i: #a),*} = self {
                             #(#a.apply(#b));*;
                         } else {
-                            *self = Self::#ident{#(#i: <#t as Diff>::identity().apply_new(#b)),*};
+                            *self = Self::#ident{#(#i: <#t as ::diff::Diff>::identity().apply_new(#b)),*};
                         }
                     }
                 }
@@ -396,7 +396,7 @@ fn derive_enum(
                         if let Self::#ident(#(#a),*) = self {
                             #(#a.apply(#b));*;
                         } else {
-                            *self = Self::#ident(#(<#t as Diff>::identity().apply_new(#b)),*);
+                            *self = Self::#ident(#(<#t as ::diff::Diff>::identity().apply_new(#b)),*);
                         }
                     }
                 }
@@ -409,10 +409,10 @@ fn derive_enum(
 
     let identity = match &first.fields {
         Fields::Named(_) => quote! {
-            Self::#first_ident { #(#first_names: <#first_types as Diff>::identity()),* }
+            Self::#first_ident { #(#first_names: <#first_types as ::diff::Diff>::identity()),* }
         },
         Fields::Unnamed(_) => quote! {
-            Self::#first_ident ( #(<#first_types as Diff>::identity()),* )
+            Self::#first_ident ( #(<#first_types as ::diff::Diff>::identity()),* )
         },
         Fields::Unit => quote! {
             Self::#first_ident
@@ -426,7 +426,7 @@ fn derive_enum(
             #(#variants_type_decl),*,
         }
 
-        impl #impl_generics Diff for #ident #type_generics #where_clause {
+        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
