@@ -8,8 +8,8 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::{Comma, Where};
 use syn::{
-    parenthesized, parse, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields,
-    GenericParam, Generics, Ident, ImplGenerics, Index, Result as SynResult, TypeGenerics,
+    parenthesized, parse, parse2, Attribute, Data, DataEnum, DeriveInput, Error, Field, Fields,
+    GenericParam, Generics, Ident, ImplGenerics, Index, Path, Result as SynResult, TypeGenerics,
     TypeParam, Visibility, WhereClause, WherePredicate,
 };
 
@@ -30,9 +30,9 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
 
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
 
-    // Create a `T: ::diff::Diff` predicate for each type param, and add it to
+    // Create a `T: Diff` predicate for each type param, and add it to
     // the where clause
-    let where_clause_owned = type_where_clause(&input.generics, where_clause);
+    let where_clause_owned = type_where_clause(&attrs, &input.generics, where_clause);
     let where_clause_with_diff_predicates = where_clause_owned.as_ref().or(where_clause);
     let generics = (
         impl_generics,
@@ -44,7 +44,7 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => derive_named(attrs, ident, &fields.named, generics)?,
             Fields::Unnamed(fields) => derive_unnamed(attrs, ident, &fields.unnamed, generics)?,
-            Fields::Unit => derive_unit(ident),
+            Fields::Unit => derive_unit(attrs, ident),
         },
         Data::Enum(data_enum) => derive_enum(attrs, ident, &data_enum, generics),
         _ => todo!(),
@@ -54,10 +54,11 @@ fn derive_or_error(input: TokenStream) -> SynResult<TokenStream> {
 }
 
 fn type_where_clause(
+    attrs: &StructAttributes,
     generics: &Generics,
     where_clause: Option<&WhereClause>,
 ) -> Option<WhereClause> {
-    let mut where_predicates = type_where_predicates(generics);
+    let mut where_predicates = type_where_predicates(attrs, generics);
     if where_predicates.peek().is_some() {
         let mut where_clause = match where_clause {
             Some(where_clause) => where_clause.to_owned(),
@@ -74,18 +75,20 @@ fn type_where_clause(
     }
 }
 
-fn type_where_predicates(
-    generics: &Generics,
-) -> Peekable<impl Iterator<Item = WherePredicate> + '_> {
+fn type_where_predicates<'a>(
+    attrs: &'a StructAttributes,
+    generics: &'a Generics,
+) -> Peekable<impl Iterator<Item = WherePredicate> + 'a> {
+    let diff_path = attrs.path.clone();
     let where_predicates = generics
         .params
         .iter()
-        .filter_map(|param| {
+        .filter_map(move |param| {
             if let GenericParam::Type(TypeParam { ident, bounds, .. }) = param {
                 let bounds = if bounds.is_empty() {
-                    quote!(::diff::Diff)
+                    quote!(#diff_path::Diff)
                 } else {
-                    quote!(#bounds + ::diff::Diff)
+                    quote!(#bounds + #diff_path::Diff)
                 };
                 let where_predicate: WherePredicate = syn::parse2(quote! { #ident: #bounds })
                     .expect("Failed to parse where predicate in diff_derive");
@@ -107,6 +110,7 @@ fn derive_named(
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let diff_path = attrs.path;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -130,11 +134,11 @@ fn derive_named(
         #visibility struct #diff_ident #type_generics #where_clause {
             #(
                 #(#attrs)*
-                #visbs #diff_names: <#types as ::diff::Diff>::Repr
+                #visbs #diff_names: <#types as #diff_path::Diff>::Repr
             ),*
         }
 
-        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
+        impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -149,7 +153,7 @@ fn derive_named(
 
             fn identity() -> Self {
                 Self {
-                    #(#names: <#types as ::diff::Diff>::identity()),*
+                    #(#names: <#types as #diff_path::Diff>::identity()),*
                 }
             }
         }
@@ -165,6 +169,7 @@ fn derive_unnamed(
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let diff_path = attrs.path;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -189,11 +194,11 @@ fn derive_unnamed(
         #visibility struct #diff_ident #type_generics (
             #(
                 #(#attrs)*
-                #visbs <#types as ::diff::Diff>::Repr
+                #visbs <#types as #diff_path::Diff>::Repr
             ),*
         ) #where_clause ;
 
-        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
+        impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -208,16 +213,17 @@ fn derive_unnamed(
 
             fn identity() -> Self {
                 Self (
-                    #(<#types as ::diff::Diff>::identity()),*
+                    #(<#types as #diff_path::Diff>::identity()),*
                 )
             }
         }
     })
 }
 
-fn derive_unit(ident: Ident) -> Tokens {
+fn derive_unit(attrs: StructAttributes, ident: Ident) -> Tokens {
+    let diff_path = attrs.path;
     quote! {
-        impl ::diff::Diff for #ident {
+        impl #diff_path::Diff for #ident {
             type Repr = ();
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -244,6 +250,7 @@ fn derive_enum(
     let attr = attrs.attrs;
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
+    let diff_path = attrs.path;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let first = data_enum.variants.first().unwrap();
@@ -277,7 +284,7 @@ fn derive_enum(
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
 
-                    quote! { #ident{#(#names: <#types as ::diff::Diff>::Repr),*} }
+                    quote! { #ident{#(#names: <#types as #diff_path::Diff>::Repr),*} }
                 }
                 Fields::Unnamed(fields) => {
                     let types = fields
@@ -285,7 +292,7 @@ fn derive_enum(
                         .iter()
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
-                    quote! { #ident(#(<#types as ::diff::Diff>::Repr),*) }
+                    quote! { #ident(#(<#types as #diff_path::Diff>::Repr),*) }
                 }
                 Fields::Unit => quote! {
                     #ident
@@ -331,7 +338,7 @@ fn derive_enum(
                                 #diff_ident::#ident{#(#i: #a.diff(#b)),*}
                             },
                         (_, Self::#ident{#(#i: #b),*}) =>
-                            #diff_ident::#ident{#(#i: <#t as ::diff::Diff>::identity().diff(#b)),*}
+                            #diff_ident::#ident{#(#i: <#t as #diff_path::Diff>::identity().diff(#b)),*}
                     }
                 }
                 Fields::Unnamed(fields) => {
@@ -350,7 +357,7 @@ fn derive_enum(
                                 #diff_ident::#ident(#(#a.diff(#b)),*)
                             },
                         (_, Self::#ident(#(#b),*)) =>
-                            #diff_ident::#ident(#(<#t as ::diff::Diff>::identity().diff(#b)),*)
+                            #diff_ident::#ident(#(<#t as #diff_path::Diff>::identity().diff(#b)),*)
                     }
                 }
                 Fields::Unit => quote! {
@@ -378,7 +385,7 @@ fn derive_enum(
                         if let Self::#ident{#(#i: #a),*} = self {
                             #(#a.apply(#b));*;
                         } else {
-                            *self = Self::#ident{#(#i: <#t as ::diff::Diff>::identity().apply_new(#b)),*};
+                            *self = Self::#ident{#(#i: <#t as #diff_path::Diff>::identity().apply_new(#b)),*};
                         }
                     }
                 }
@@ -396,7 +403,7 @@ fn derive_enum(
                         if let Self::#ident(#(#a),*) = self {
                             #(#a.apply(#b));*;
                         } else {
-                            *self = Self::#ident(#(<#t as ::diff::Diff>::identity().apply_new(#b)),*);
+                            *self = Self::#ident(#(<#t as #diff_path::Diff>::identity().apply_new(#b)),*);
                         }
                     }
                 }
@@ -409,10 +416,10 @@ fn derive_enum(
 
     let identity = match &first.fields {
         Fields::Named(_) => quote! {
-            Self::#first_ident { #(#first_names: <#first_types as ::diff::Diff>::identity()),* }
+            Self::#first_ident { #(#first_names: <#first_types as #diff_path::Diff>::identity()),* }
         },
         Fields::Unnamed(_) => quote! {
-            Self::#first_ident ( #(<#first_types as ::diff::Diff>::identity()),* )
+            Self::#first_ident ( #(<#first_types as #diff_path::Diff>::identity()),* )
         },
         Fields::Unit => quote! {
             Self::#first_ident
@@ -426,7 +433,7 @@ fn derive_enum(
             #(#variants_type_decl),*,
         }
 
-        impl #impl_generics ::diff::Diff for #ident #type_generics #where_clause {
+        impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
             fn diff(&self, other: &Self) -> Self::Repr {
@@ -454,6 +461,7 @@ struct StructAttributesRaw {
     name: Option<Ident>,
     visibility: Option<Visibility>,
     attrs: OuterAttributes,
+    path: Option<Path>,
 }
 
 /// Contains top-level attributes for structs and enums
@@ -461,6 +469,7 @@ struct StructAttributes {
     name: Ident,
     visibility: Visibility,
     attrs: Vec<Attribute>,
+    path: Path,
 }
 
 #[derive(Default)]
@@ -539,10 +548,13 @@ fn parse_struct_attributes(
                 "visibility" => {
                     raw.visibility = Some(parse(attr_named.tokens.into())?)
                 }
+                "path" => {
+                    raw.path = Some(parse(attr_named.tokens.into())?)
+                }
                 _ => {
                     return Err(
                         Error::new(attr_named.name.span(),
-                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility, path", name)
                     ))
                 },
             }
@@ -553,6 +565,7 @@ fn parse_struct_attributes(
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
         visibility: raw.visibility.unwrap_or(vis),
         attrs: raw.attrs.0,
+        path: raw.path.unwrap_or_else(|| parse2(quote!(::diff)).unwrap()),
     })
 }
 
@@ -582,7 +595,7 @@ fn parse_named_field_attributes(
                 _ => {
                     return Err(
                         Error::new(attr_named.name.span(),
-                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility", name)
+                        format!("Attribute name {} was not expected. Possible attribute names: attr, name, visibility, path", name)
                     ))
                 },
             }
