@@ -90,7 +90,7 @@ fn type_where_predicates<'a>(
                 } else {
                     quote!(#bounds + #diff_path::Diff)
                 };
-                let where_predicate: WherePredicate = syn::parse2(quote! { #ident: #bounds })
+                let where_predicate: WherePredicate = parse2(quote! { #ident: #bounds })
                     .expect("Failed to parse where predicate in diff_derive");
                 Some(where_predicate)
             } else {
