@@ -134,21 +134,37 @@ fn derive_named(
         #visibility struct #diff_ident #type_generics #where_clause {
             #(
                 #(#attrs)*
-                #visbs #diff_names: <#types as #diff_path::Diff>::Repr
+                #visbs #diff_names: Change<<#types as #diff_path::Diff>::Repr>
             ),*
+        }
+
+        impl #diff_ident #type_generics #where_clause {
+            pub fn no_change(&self) -> bool {
+                true #(&& self.#diff_names.no_change())*
+            }
         }
 
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_ident {
+            fn diff(&self, other: &Self) -> Change<Self::Repr> {
+                let diff_repr = #diff_ident {
                     #(#diff_names: self.#names.diff(&other.#names)),*
+                };
+                if diff_repr.no_change() {
+                    Change::NoChange
+                } else {
+                    Change::Change(diff_repr)
                 }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
-                #(self.#names.apply(&diff.#diff_names);)*
+            fn apply(&mut self, diff: &Change<Self::Repr>) {
+                match diff {
+                    Change::NoChange => return,
+                    Change::Change(diff) => {
+                        #(self.#names.apply(&diff.#diff_names);)*
+                    }
+                }
             }
 
             fn identity() -> Self {
@@ -194,21 +210,37 @@ fn derive_unnamed(
         #visibility struct #diff_ident #type_generics (
             #(
                 #(#attrs)*
-                #visbs <#types as #diff_path::Diff>::Repr
+                #visbs Change<<#types as #diff_path::Diff>::Repr>
             ),*
         ) #where_clause ;
+
+        impl #diff_ident #type_generics #where_clause {
+            pub fn no_change(&self) -> bool {
+                true #(&& self.#numbers.no_change())*
+            }
+        }
 
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_ident (
+            fn diff(&self, other: &Self) -> Change<Self::Repr> {
+                let diff_repr = #diff_ident (
                     #(self.#numbers.diff(&other.#numbers)),*
-                )
+                );
+                if diff_repr.no_change() {
+                    Change::NoChange
+                } else {
+                    Change::Change(diff_repr)
+                }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
-                #(self.#numbers.apply(&diff.#numbers);)*
+            fn apply(&mut self, diff: &Change<Self::Repr>) {
+                match diff {
+                    Change::NoChange => return,
+                    Change::Change(diff) => {
+                        #(self.#numbers.apply(&diff.#numbers);)*
+                    }
+                }
             }
 
             fn identity() -> Self {
@@ -226,11 +258,11 @@ fn derive_unit(attrs: StructAttributes, ident: Ident) -> Tokens {
         impl #diff_path::Diff for #ident {
             type Repr = ();
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                ()
+            fn diff(&self, other: &Self) -> Change<Self::Repr> {
+               Change::Change(())
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
+            fn apply(&mut self, diff: &Change<Self::Repr>) {
                 ()
             }
 
@@ -436,13 +468,13 @@ fn derive_enum(
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
+            fn diff(&self, other: &Self) -> Change<Self::Repr> {
                 match (self, other) {
                     #(#variants_diff_arms),*,
                 }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
+            fn apply(&mut self, diff: &Change<Self::Repr>) {
                 match diff {
                     Self::Repr::NoChange => {},
                     #(#variants_apply_arms),*,
