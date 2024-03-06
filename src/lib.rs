@@ -138,7 +138,7 @@ fn derive_named(
             ),*
         }
 
-        impl #diff_ident #type_generics #where_clause {
+        impl #impl_generics #diff_ident #type_generics #where_clause {
             pub fn no_change(&self) -> bool {
                 true #(&& self.#diff_names.no_change())*
             }
@@ -214,7 +214,7 @@ fn derive_unnamed(
             ),*
         ) #where_clause ;
 
-        impl #diff_ident #type_generics #where_clause {
+        impl #impl_generics #diff_ident #type_generics #where_clause {
             pub fn no_change(&self) -> bool {
                 true #(&& self.#numbers.no_change())*
             }
