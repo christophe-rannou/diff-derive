@@ -474,10 +474,14 @@ fn derive_enum(
             }
 
             fn apply(&mut self, diff: &#diff_path::Change<Self::Repr>) {
-                // match diff {
-                //     Self::Repr:: None=> {},
-                //     #(#variants_apply_arms),*,
-                // }
+                match diff {
+                    #diff_path::Change::None => {},
+                    #diff_path::Change::Some(diff) => {
+                        match diff {
+                            #(#variants_apply_arms),*,
+                        }
+                    }
+                }
             }
 
             fn identity() -> Self {
