@@ -158,11 +158,11 @@ fn derive_named(
                 }
             }
 
-            fn apply(&mut self, diff: &#diff_path::Change<Self::Repr>) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 match diff {
                     #diff_path::Change:: None=> return,
                     #diff_path::Change::Some(diff) => {
-                        #(self.#names.apply(&diff.#diff_names);)*
+                        #(self.#names.apply(diff.#diff_names);)*
                     }
                 }
             }
@@ -234,11 +234,11 @@ fn derive_unnamed(
                 }
             }
 
-            fn apply(&mut self, diff: &#diff_path::Change<Self::Repr>) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 match diff {
                     #diff_path::Change:: None=> return,
                     #diff_path::Change::Some(diff) => {
-                        #(self.#numbers.apply(&diff.#numbers);)*
+                        #(self.#numbers.apply(diff.#numbers);)*
                     }
                 }
             }
@@ -262,7 +262,7 @@ fn derive_unit(attrs: StructAttributes, ident: Ident) -> Tokens {
                #diff_path::Change::Some(())
             }
 
-            fn apply(&mut self, diff: &#diff_path::Change<Self::Repr>) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 ()
             }
 
@@ -473,7 +473,7 @@ fn derive_enum(
                 }
             }
 
-            fn apply(&mut self, diff: &#diff_path::Change<Self::Repr>) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 match diff {
                     #diff_path::Change::None => {},
                     #diff_path::Change::Some(diff) => {
