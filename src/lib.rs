@@ -111,6 +111,13 @@ fn derive_named(
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
     let diff_path = attrs.path;
+    let serializable = attrs.serializable;
+    let bidule = quote!();
+    let serde_attr = syn::parse_str::<OuterAttributes>(
+        "#[serde(default, skip_serializing_if = \"::Change::no_change\")]",
+    )?
+    .0;
+    let ts = quote!(#diff_path);
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -123,7 +130,16 @@ fn derive_named(
     let names = fields.iter().map(|f| &f.ident).collect::<Vec<_>>();
 
     let diff_names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
-    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let attrs = field_attrs
+        .iter()
+        .map(|f| {
+            let mut attrs = f.attrs.clone();
+            if serializable {
+                attrs.append(&mut serde_attr.clone())
+            };
+            attrs
+        })
+        .collect::<Vec<_>>();
     let visbs = field_attrs
         .iter()
         .map(|f| &f.visibility)
@@ -496,6 +512,7 @@ struct StructAttributesRaw {
     name: Option<Ident>,
     visibility: Option<Visibility>,
     attrs: OuterAttributes,
+    serializable: bool,
     path: Option<Path>,
 }
 
@@ -504,6 +521,7 @@ struct StructAttributes {
     name: Ident,
     visibility: Visibility,
     attrs: Vec<Attribute>,
+    serializable: bool,
     path: Path,
 }
 
@@ -575,7 +593,20 @@ fn parse_struct_attributes(
 
             match name.as_ref() {
                 "attr" => {
-                    raw.attrs = parse(attr_named.tokens.into())?
+                    raw.attrs = parse(attr_named.tokens.into())?;
+                    raw.serializable = raw.attrs.0
+                    .iter()
+                    .filter(|a| a.path.is_ident("derive"))
+                    .any(|a| match a.parse_meta() {
+                        Ok(meta) => match meta {
+                            syn::Meta::List(meta_list) => meta_list.nested.iter().any(|nested| match nested{
+                                syn::NestedMeta::Meta(meta) => meta.path().is_ident("Serialize"),
+                                _ => false,
+                            }),
+                            _ => false,
+                        },
+                        Err(_) => false,
+                    });
                 }
                 "name" => {
                     raw.name = Some(parse(attr_named.tokens.into())?)
@@ -600,6 +631,7 @@ fn parse_struct_attributes(
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
         visibility: raw.visibility.unwrap_or(vis),
         attrs: raw.attrs.0,
+        serializable: raw.serializable,
         path: raw.path.unwrap_or_else(|| parse2(quote!(::diff)).unwrap()),
     })
 }
