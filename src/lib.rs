@@ -112,12 +112,6 @@ fn derive_named(
     let visibility = attrs.visibility;
     let diff_path = attrs.path;
     let serializable = attrs.serializable;
-    let bidule = quote!();
-    let serde_attr = syn::parse_str::<OuterAttributes>(
-        "#[serde(default, skip_serializing_if = \"::Change::no_change\")]",
-    )?
-    .0;
-    let ts = quote!(#diff_path);
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -135,7 +129,7 @@ fn derive_named(
         .map(|f| {
             let mut attrs = f.attrs.clone();
             if serializable {
-                attrs.append(&mut serde_attr.clone())
+                attrs.append(&mut skip_serialize_attr(&diff_path))
             };
             attrs
         })
@@ -192,6 +186,15 @@ fn derive_named(
     })
 }
 
+fn skip_serialize_attr(diff_path: &Path) -> Vec<Attribute> {
+    let change_path = quote!(#diff_path::Change::no_change).to_string();
+    syn::parse_str::<OuterAttributes>(&format!(
+        "#[serde(default, skip_serializing_if = \"{change_path}\")]"
+    ))
+    .unwrap()
+    .0
+}
+
 fn derive_unnamed(
     attrs: StructAttributes,
     ident: Ident,
@@ -202,6 +205,7 @@ fn derive_unnamed(
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
     let diff_path = attrs.path;
+    let serializable = attrs.serializable;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -215,7 +219,16 @@ fn derive_unnamed(
         .enumerate()
         .map(|(a, b)| (Index::from(a), b))
         .unzip();
-    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let attrs = field_attrs
+        .iter()
+        .map(|f| {
+            let mut attrs = f.attrs.clone();
+            if serializable {
+                attrs.append(&mut skip_serialize_attr(&diff_path))
+            };
+            attrs
+        })
+        .collect::<Vec<_>>();
     let visbs = field_attrs
         .iter()
         .map(|f| &f.visibility)
