@@ -111,6 +111,7 @@ fn derive_named(
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
     let diff_path = attrs.path;
+    let serializable = attrs.serializable;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -123,7 +124,16 @@ fn derive_named(
     let names = fields.iter().map(|f| &f.ident).collect::<Vec<_>>();
 
     let diff_names = field_attrs.iter().map(|f| &f.name).collect::<Vec<_>>();
-    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let attrs = field_attrs
+        .iter()
+        .map(|f| {
+            let mut attrs = f.attrs.clone();
+            if serializable {
+                attrs.append(&mut skip_serialize_attr(&diff_path))
+            };
+            attrs
+        })
+        .collect::<Vec<_>>();
     let visbs = field_attrs
         .iter()
         .map(|f| &f.visibility)
@@ -134,21 +144,37 @@ fn derive_named(
         #visibility struct #diff_ident #type_generics #where_clause {
             #(
                 #(#attrs)*
-                #visbs #diff_names: <#types as #diff_path::Diff>::Repr
+                #visbs #diff_names: #diff_path::Change<<#types as #diff_path::Diff>::Repr>
             ),*
+        }
+
+        impl #impl_generics #diff_ident #type_generics #where_clause {
+            pub fn no_change(&self) -> bool {
+                true #(&& self.#diff_names.no_change())*
+            }
         }
 
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_ident {
+            fn diff(&self, other: &Self) -> #diff_path::Change<Self::Repr> {
+                let diff_repr = #diff_ident {
                     #(#diff_names: self.#names.diff(&other.#names)),*
+                };
+                if diff_repr.no_change() {
+                    #diff_path::Change::None
+                } else {
+                    #diff_path::Change::Some(diff_repr)
                 }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
-                #(self.#names.apply(&diff.#diff_names);)*
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
+                match diff {
+                    #diff_path::Change:: None=> return,
+                    #diff_path::Change::Some(diff) => {
+                        #(self.#names.apply(diff.#diff_names);)*
+                    }
+                }
             }
 
             fn identity() -> Self {
@@ -158,6 +184,15 @@ fn derive_named(
             }
         }
     })
+}
+
+fn skip_serialize_attr(diff_path: &Path) -> Vec<Attribute> {
+    let change_path = quote!(#diff_path::Change::no_change).to_string();
+    syn::parse_str::<OuterAttributes>(&format!(
+        "#[serde(default, skip_serializing_if = \"{change_path}\")]"
+    ))
+    .unwrap()
+    .0
 }
 
 fn derive_unnamed(
@@ -170,6 +205,7 @@ fn derive_unnamed(
     let diff_ident = attrs.name;
     let visibility = attrs.visibility;
     let diff_path = attrs.path;
+    let serializable = attrs.serializable;
     let (impl_generics, type_generics, where_clause) = generics;
 
     let field_attrs = fields
@@ -183,7 +219,16 @@ fn derive_unnamed(
         .enumerate()
         .map(|(a, b)| (Index::from(a), b))
         .unzip();
-    let attrs = field_attrs.iter().map(|f| &f.attrs).collect::<Vec<_>>();
+    let attrs = field_attrs
+        .iter()
+        .map(|f| {
+            let mut attrs = f.attrs.clone();
+            if serializable {
+                attrs.append(&mut skip_serialize_attr(&diff_path))
+            };
+            attrs
+        })
+        .collect::<Vec<_>>();
     let visbs = field_attrs
         .iter()
         .map(|f| &f.visibility)
@@ -194,21 +239,37 @@ fn derive_unnamed(
         #visibility struct #diff_ident #type_generics (
             #(
                 #(#attrs)*
-                #visbs <#types as #diff_path::Diff>::Repr
+                #visbs #diff_path::Change<<#types as #diff_path::Diff>::Repr>
             ),*
         ) #where_clause ;
+
+        impl #impl_generics #diff_ident #type_generics #where_clause {
+            pub fn no_change(&self) -> bool {
+                true #(&& self.#numbers.no_change())*
+            }
+        }
 
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                #diff_ident (
+            fn diff(&self, other: &Self) -> #diff_path::Change<Self::Repr> {
+                let diff_repr = #diff_ident (
                     #(self.#numbers.diff(&other.#numbers)),*
-                )
+                );
+                if diff_repr.no_change() {
+                    #diff_path::Change::None
+                } else {
+                    #diff_path::Change::Some(diff_repr)
+                }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
-                #(self.#numbers.apply(&diff.#numbers);)*
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
+                match diff {
+                    #diff_path::Change:: None=> return,
+                    #diff_path::Change::Some(diff) => {
+                        #(self.#numbers.apply(diff.#numbers);)*
+                    }
+                }
             }
 
             fn identity() -> Self {
@@ -226,11 +287,11 @@ fn derive_unit(attrs: StructAttributes, ident: Ident) -> Tokens {
         impl #diff_path::Diff for #ident {
             type Repr = ();
 
-            fn diff(&self, other: &Self) -> Self::Repr {
-                ()
+            fn diff(&self, other: &Self) -> #diff_path::Change<Self::Repr> {
+               #diff_path::Change::Some(())
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 ()
             }
 
@@ -284,7 +345,7 @@ fn derive_enum(
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
 
-                    quote! { #ident{#(#names: <#types as #diff_path::Diff>::Repr),*} }
+                    quote! { #ident{#(#names: #diff_path::Change<<#types as #diff_path::Diff>::Repr>),*} }
                 }
                 Fields::Unnamed(fields) => {
                     let types = fields
@@ -292,7 +353,7 @@ fn derive_enum(
                         .iter()
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
-                    quote! { #ident(#(<#types as #diff_path::Diff>::Repr),*) }
+                    quote! { #ident(#(#diff_path::Change<<#types as #diff_path::Diff>::Repr>),*) }
                 }
                 Fields::Unit => quote! {
                     #ident
@@ -333,12 +394,12 @@ fn derive_enum(
                     quote! {
                         (Self::#ident{#(#i: #a),*}, Self::#ident{#(#i: #b),*}) =>
                             if #(#a == #b)&&* {
-                                Self::Repr::NoChange
+                                #diff_path::Change::None
                             } else {
-                                #diff_ident::#ident{#(#i: #a.diff(#b)),*}
+                                #diff_path::Change::Some(#diff_ident::#ident{#(#i: #a.diff(#b)),*})
                             },
                         (_, Self::#ident{#(#i: #b),*}) =>
-                            #diff_ident::#ident{#(#i: <#t as #diff_path::Diff>::identity().diff(#b)),*}
+                        #diff_path::Change::Some(#diff_ident::#ident{#(#i: <#t as #diff_path::Diff>::identity().diff(#b)),*})
                     }
                 }
                 Fields::Unnamed(fields) => {
@@ -352,17 +413,17 @@ fn derive_enum(
                     quote! {
                         (Self::#ident(#(#a),*), Self::#ident(#(#b),*)) =>
                             if #(#a == #b)&&* {
-                                Self::Repr::NoChange
+                                #diff_path::Change::None
                             } else {
-                                #diff_ident::#ident(#(#a.diff(#b)),*)
+                                #diff_path::Change::Some(#diff_ident::#ident(#(#a.diff(#b)),*))
                             },
                         (_, Self::#ident(#(#b),*)) =>
-                            #diff_ident::#ident(#(<#t as #diff_path::Diff>::identity().diff(#b)),*)
+                        #diff_path::Change::Some(#diff_ident::#ident(#(<#t as #diff_path::Diff>::identity().diff(#b)),*))
                     }
                 }
                 Fields::Unit => quote! {
-                    (Self::#ident, Self::#ident) => Self::Repr::NoChange,
-                    (_, Self::#ident) => Self::Repr::#ident
+                    (Self::#ident, Self::#ident) => #diff_path::Change::None,
+                    (_, Self::#ident) => #diff_path::Change::Some(Self::Repr::#ident)
                 },
             }
         })
@@ -429,23 +490,26 @@ fn derive_enum(
     quote! {
         #(#attr)*
         #visibility enum #diff_ident #type_generics #where_clause {
-            NoChange,
             #(#variants_type_decl),*,
         }
 
         impl #impl_generics #diff_path::Diff for #ident #type_generics #where_clause {
             type Repr = #diff_ident #type_generics;
 
-            fn diff(&self, other: &Self) -> Self::Repr {
+            fn diff(&self, other: &Self) -> #diff_path::Change<Self::Repr> {
                 match (self, other) {
                     #(#variants_diff_arms),*,
                 }
             }
 
-            fn apply(&mut self, diff: &Self::Repr) {
+            fn apply(&mut self, diff: #diff_path::Change<Self::Repr>) {
                 match diff {
-                    Self::Repr::NoChange => {},
-                    #(#variants_apply_arms),*,
+                    #diff_path::Change::None => {},
+                    #diff_path::Change::Some(diff) => {
+                        match diff {
+                            #(#variants_apply_arms),*,
+                        }
+                    }
                 }
             }
 
@@ -461,6 +525,7 @@ struct StructAttributesRaw {
     name: Option<Ident>,
     visibility: Option<Visibility>,
     attrs: OuterAttributes,
+    serializable: bool,
     path: Option<Path>,
 }
 
@@ -469,6 +534,7 @@ struct StructAttributes {
     name: Ident,
     visibility: Visibility,
     attrs: Vec<Attribute>,
+    serializable: bool,
     path: Path,
 }
 
@@ -540,7 +606,20 @@ fn parse_struct_attributes(
 
             match name.as_ref() {
                 "attr" => {
-                    raw.attrs = parse(attr_named.tokens.into())?
+                    raw.attrs = parse(attr_named.tokens.into())?;
+                    raw.serializable = raw.attrs.0
+                    .iter()
+                    .filter(|a| a.path.is_ident("derive"))
+                    .any(|a| match a.parse_meta() {
+                        Ok(meta) => match meta {
+                            syn::Meta::List(meta_list) => meta_list.nested.iter().any(|nested| match nested{
+                                syn::NestedMeta::Meta(meta) => meta.path().is_ident("Serialize"),
+                                _ => false,
+                            }),
+                            _ => false,
+                        },
+                        Err(_) => false,
+                    });
                 }
                 "name" => {
                     raw.name = Some(parse(attr_named.tokens.into())?)
@@ -565,6 +644,7 @@ fn parse_struct_attributes(
         name: raw.name.unwrap_or(format_ident!("{}Diff", ident)),
         visibility: raw.visibility.unwrap_or(vis),
         attrs: raw.attrs.0,
+        serializable: raw.serializable,
         path: raw.path.unwrap_or_else(|| parse2(quote!(::diff)).unwrap()),
     })
 }
